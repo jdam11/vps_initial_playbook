@@ -25,8 +25,8 @@ Follow the [Ansible installation guide](https://docs.ansible.com/ansible/latest/
 ### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo-name>.git
-cd <your-repo-name>
+git clone https://github.com/jdam11/vps_initial_playbook.git
+cd vps_initial_playbook
 ```
 
 ### 3. Update Inventory File
