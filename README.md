@@ -35,8 +35,9 @@ Create an inventory file (e.g., `inventory.ini`) and define your target VPS:
 
 ```ini
 [vps_init]
-<your_vps_hostname> ansible_host=<your_vps_ip> ansible_user=<initial_user> ansible_ssh_private_key_file=<path_to_your_ssh_private_key>
+<your_vps_hostname> ansible_host=<your_vps_ip> ansible_user=<initial_user> ansible_password=<password> ansible_port=<ssh port>
 ```
+For the initial configuration, use the IP address, username, password, and SSH port provided by your VPS. Once you've created your own user and configured Tailscale (if enabled), the inventory file will automatically update with the new information to ensure continued access.
 
 ### 4. Customize Variables
 
