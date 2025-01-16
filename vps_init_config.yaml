@@ -5,16 +5,19 @@
   vars:
     tailscale_auth_key: "<your_tailscale_auth_key>" # Replace with your Tailscale auth key
     tailscale_subnets: [] # Advertise all subnets, IPv4 and IPv6 Example ["0.0.0.0/0", "::/0"]
-    ssh_port: []  # Default SSH port, override this in your inventory or playbook arguments
+    configure_tailscale: true # Set to false to skip Tailscale setup. Ensure expose_ssh_port is set to true so you dont lose ssh access.
+    expose_ssh_port: false # Set to true to expose SSH port to the internet
     tcp_ports:
       - 80       # HTTP
       - 443      # HTTPS
     udp_ports: [] # Add any UDP ports if required
-    ansible_user_name: "ansible_user" 
+    ansible_user_name: "username" 
     ansible_user_password: "password1"
     # Generate a new SSH key pair and replace the value below for all autorized keys for ansible user.
     ansible_user_ssh_key: |
       ssh-rsa abc123 user@host
+    # If the user you are running the playbook with contains the same private key and public as your ansible user you can use the following line to copy the public key to the ansible user.
+    # ansible_user_ssh_key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub') }}"
   tasks:
     # Update and upgrade packages
     - name: Update and upgrade packages for Debian/Ubuntu
@@ -114,6 +117,13 @@
         mode: '0755'
       when: step_ansible_user_created.changed
 
+    - name: Update ansible_user and ansible_password in inventory
+      ansible.builtin.lineinfile:
+        path: ./inventory.ini
+        regexp: "^{{ inventory_hostname }} ansible_host=.*ansible_user=.*ansible_password=.*"
+        line: "{{ inventory_hostname }} ansible_host={{ ansible_host }} ansible_user={{ ansible_user_name }} ansible_password={{ ansible_user_password }} ansible_port={{ ansible_port }}"
+      when: step_ansible_user_created.changed
+
     # Harden SSH configuration
     - name: Backup current SSH config
       copy:
@@ -130,55 +140,74 @@
       loop:
         - { regexp: "^#?PasswordAuthentication", line: "PasswordAuthentication no" }
         - { regexp: "^#?PermitRootLogin", line: "PermitRootLogin no" }
-        - { regexp: "^#?Port", line: "Port {{ ssh_port }}" }
+        - { regexp: "^#?Port", line: "Port {{ ansible_port }}" }
         - { regexp: "^#?MaxAuthTries", line: "MaxAuthTries 3" }
         - { regexp: "^#?PermitEmptyPasswords", line: "PermitEmptyPasswords no" }
         - { regexp: "^#?AllowTcpForwarding", line: "AllowTcpForwarding no" }
 
     # Install and connect to Tailscale Network
-    - name: Ensure apt cache is updated (Debian/Ubuntu)
-      apt:
-        update_cache: yes
-      when: ansible_os_family == "Debian"
+    - block:
+        - name: Update apt cache (Debian/Ubuntu)
+          apt:
+            update_cache: yes
+          when: ansible_os_family == "Debian"
 
-    - name: Install Tailscale
-      apt:
-        name: tailscale
-        state: present
-      when: ansible_os_family == "Debian"
+        - name: Install Tailscale
+          apt:
+            name: tailscale
+            state: present
+          when: ansible_os_family == "Debian"
 
-    - name: Enable Tailscale service
-      systemd:
-        name: tailscaled
-        enabled: yes
-        state: started
+        - name: Enable and start Tailscale service
+          systemd:
+            name: tailscaled
+            enabled: yes
+            state: started
 
-    - name: Authenticate and connect to Tailscale
-      shell: |
-        tailscale up \
-          --authkey={{ TAILSCALE_AUTH_KEY }} \
-          {% if TAILSCALE_SUBNETS is defined and TAILSCALE_SUBNETS|length > 0 %}
-          --advertise-routes={{ TAILSCALE_SUBNETS | join(",") }} \
-          {% endif %}
-          --accept-routes
-      args:
-        warn: false
-      register: tailscale_up_result
+        - name: Authenticate and connect to Tailscale
+          shell: |
+            tailscale up \
+              --authkey={{ TAILSCALE_AUTH_KEY }} \
+              {% if TAILSCALE_SUBNETS is defined and TAILSCALE_SUBNETS|length > 0 %}\
+              --advertise-routes={{ TAILSCALE_SUBNETS | join(",") }} \
+              {% endif %}\
+              --accept-routes
+          args:
+            warn: false
+          register: tailscale_up_result
 
-    - name: Debug output of Tailscale connection
-      debug:
-        var: tailscale_up_result.stdout
+        - name: Display Tailscale connection output
+          debug:
+            var: tailscale_up_result.stdout
 
-    - name: Verify Tailscale connection
-      command: tailscale status
-      register: tailscale_status
-      retries: 3
-      delay: 5
-      until: tailscale_status.rc == 0
+        - name: Verify Tailscale connection
+          command: tailscale status
+          register: tailscale_status
+          retries: 3
+          delay: 5
+          until: tailscale_status.rc == 0
 
-    - name: Show Tailscale status
-      debug:
-        var: tailscale_status.stdout
+        - name: Show Tailscale status
+          debug:
+            var: tailscale_status.stdout
+
+        - name: Get the Tailscale IP address
+          shell: tailscale ip -4 # Use -6 for IPv6
+          register: tailscale_ip
+          changed_when: false
+
+        - name: Remove old SSH key from known_hosts
+          shell: ssh-keygen -R {{ tailscale_ip.stdout }}
+          changed_when: false
+          delegate_to: localhost
+
+        - name: Update ansible_host in inventory
+          lineinfile:
+            path: ./inventory.ini
+            regexp: "^{{ inventory_hostname }} ansible_host=.*"
+            line: "{{ inventory_hostname }} ansible_host={{ tailscale_ip.stdout }} ansible_user={{ ansible_user }} ansible_password={{ ansible_password }} ansible_port={{ ansible_port }}"
+          when: ansible_host != tailscale_ip.stdout
+      when: configure_tailscale == true
 
     # Install Docker CE and set up rootless mode
     - name: Update and upgrade the system
@@ -263,12 +292,12 @@
         state: present
         update_cache: yes
 
-    - name: Allow OpenSSH in UFW with custom port
+    - name: Allow OpenSSH in UFW with custom port. Only runs if expose_ssh_port is true.
       ufw:
         rule: allow
-        port: "{{ ssh_port }}"
+        port: "{{ ansible_port }}"
         proto: tcp
-      when: ssh_port | length > 0
+      when: expose_ssh_port == true
 
     - name: Allow additional TCP ports
       ufw:
@@ -291,16 +320,6 @@
         state: enabled
         policy: deny
 
-    # Restart SSH and Validate
-    - name: Restart SSH service
-      service:
-        name: ssh
-        state: restarted
-
-    - name: Ensure UFW is active
-      command: ufw status
-      register: ufw_status
-      changed_when: false
-
-    - debug:
-        msg: "UFW status: {{ ufw_status.stdout_lines }}"
+    - name: Reboot VPS
+      ansible.builtin.reboot:
+        reboot_timeout: 300

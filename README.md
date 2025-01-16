@@ -31,24 +31,21 @@ cd vps_initial_playbook
 
 ### 3. Update Inventory File
 
-Create an inventory file (e.g., `inventory.yml`) and define your target VPS:
+Create an inventory file (e.g., `inventory.ini`) and define your target VPS:
 
-```yaml
-all:
-  hosts:
-    vps_init:
-      ansible_host: <your_vps_ip>
-      ansible_user: <initial_user>
-      ansible_ssh_private_key_file: <path_to_your_ssh_private_key>
+```ini
+[vps_init]
+<your_vps_hostname> ansible_host=<your_vps_ip> ansible_user=<initial_user> ansible_ssh_private_key_file=<path_to_your_ssh_private_key>
 ```
 
 ### 4. Customize Variables
 
-Edit the `vars` section of the playbook or pass them as extra variables. Note: The `ssh_port` variable is only necessary if you want to expose SSH via the public IP. With Tailscale installed, this might not be required for all use cases. Here are the required variables:
+Edit the `vars` section of the playbook or pass them as extra variables. Here are the required variables:
 
 - `tailscale_auth_key`: Tailscale auth key (replace `<your_tailscale_auth_key>` in the playbook).
 - `tailscale_subnets`: Subnets to advertise (e.g., `['0.0.0.0/0', '::/0']` or leave empty).
-- `ssh_port`: Custom SSH port. This is primarily for cases where SSH needs to be accessible via the public IP. It is optional when using Tailscale.
+- `configure_tailscale`: Set to `true` to enable Tailscale setup (default).
+- `expose_ssh_port`: Set to `true` to expose SSH to the public internet (default: `false`).
 - `ansible_user_name`: Name of the Ansible user to create.
 - `ansible_user_password`: Password for the Ansible user (hashed automatically).
 - `ansible_user_ssh_key`: Public SSH key for the Ansible user.
@@ -58,7 +55,8 @@ Example to override variables:
 ```yaml
 vars:
   tailscale_auth_key: "tskey-xxxxxxxx"
-  ssh_port: 2222
+  configure_tailscale: true
+  expose_ssh_port: true
   ansible_user_name: "ansible_user"
   ansible_user_password: "StrongPassword123"
   ansible_user_ssh_key: |
@@ -69,17 +67,17 @@ vars:
 
 Run the playbook with the following command:
 
-Note: If you plan to use Tailscale exclusively for SSH access, you can skip setting the `ssh_port` variable.
+Note: If you plan to use Tailscale exclusively for SSH access, keep `expose_ssh_port` variable set to false.
 
 ```bash
-ansible-playbook -i inventory.yml playbook.yml --ask-become-pass
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
 ```
 
 Use the `--extra-vars` flag to override variables dynamically:
 
 ```bash
-ansible-playbook -i inventory.yml playbook.yml --ask-become-pass \
-  --extra-vars "tailscale_auth_key=tskey-xxxxxxxx ssh_port=2222"
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass \
+  --extra-vars "tailscale_auth_key=tskey-xxxxxxxx"
 ```
 
 ---
@@ -119,12 +117,10 @@ ansible-playbook -i inventory.yml playbook.yml --ask-become-pass \
 
 After running the playbook, verify the configuration:
 
-Note: If you plan to access the server exclusively through Tailscale, you can skip the `ssh_port` validation step.
-
 1. **SSH Access**:
    - Test login with the new Ansible user and SSH key.
    - This step may be skipped if Tailscale is used exclusively for remote access.
-   - Confirm the custom SSH port is active.
+   - Confirm the custom SSH port is active if exposed.
 
 2. **Firewall**:
    - Check UFW status: `sudo ufw status`.
@@ -143,7 +139,7 @@ sudo -u docker docker run hello-world
 
 ## Troubleshooting
 
-- Use the `-vvv` flag with `ansible-playbook` for detailed output during execution. For example, you can use `ansible-playbook -i inventory.yml playbook.yml -vvv` to debug issues such as verifying SSH connectivity or checking if the Tailscale setup is working correctly.
+- Use the `-vvv` flag with `ansible-playbook` for detailed output during execution. For example, you can use `ansible-playbook -i inventory.ini playbook.yml -vvv` to debug issues such as verifying SSH connectivity or checking if the Tailscale setup is working correctly.
 - Ensure the initial SSH user has passwordless sudo access.
 - Verify Tailscale auth key validity if connection fails.
 
