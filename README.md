@@ -50,6 +50,8 @@ Edit the `vars` section of the playbook or pass them as extra variables. Here ar
 - `ansible_user_name`: Name of the Ansible user to create.
 - `ansible_user_password`: Password for the Ansible user (hashed automatically).
 - `ansible_user_ssh_key`: Public SSH key for the Ansible user.
+- `tcp_ports`: TCP ports to allow through firewall.
+- `udp_ports`: UDP ports to allow through firewall.
 
 Example to override variables:
 
@@ -62,6 +64,10 @@ vars:
   ansible_user_password: "StrongPassword123"
   ansible_user_ssh_key: |
     ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAw3...
+  tcp_ports:
+      - 80 
+      - 443
+  udp_ports: [] # Add any UDP ports if required
 ```
 
 ### 5. Run the Playbook
@@ -71,13 +77,13 @@ Run the playbook with the following command:
 Note: If you plan to use Tailscale exclusively for SSH access, keep `expose_ssh_port` variable set to false.
 
 ```bash
-ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
+ansible-playbook -i inventory.ini playbook.yml
 ```
 
 Use the `--extra-vars` flag to override variables dynamically:
 
 ```bash
-ansible-playbook -i inventory.ini playbook.yml --ask-become-pass \
+ansible-playbook -i inventory.ini playbook.yml \
   --extra-vars "tailscale_auth_key=tskey-xxxxxxxx"
 ```
 
