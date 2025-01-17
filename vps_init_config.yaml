@@ -6,6 +6,7 @@
     tailscale_auth_key: "<your_tailscale_auth_key>" # Replace with your Tailscale auth key
     tailscale_subnets: [] # Advertise all subnets, IPv4 and IPv6 Example ["0.0.0.0/0", "::/0"]
     configure_tailscale: true # Set to false to skip Tailscale setup. Ensure expose_ssh_port is set to true so you dont lose ssh access.
+    tailscale_accept_subnets: false # Set to true to accept all routes from Tailscale
     expose_ssh_port: false # Set to true to expose SSH port to the internet
     tcp_ports:
       - 80       # HTTP
@@ -117,11 +118,14 @@
         mode: '0755'
       when: step_ansible_user_created.changed
 
-    - name: Update ansible_user and ansible_password in inventory
-      ansible.builtin.lineinfile:
-        path: ./inventory.ini
-        regexp: "^{{ inventory_hostname }} ansible_host=.*ansible_user=.*ansible_password=.*"
-        line: "{{ inventory_hostname }} ansible_host={{ ansible_host }} ansible_user={{ ansible_user_name }} ansible_password={{ ansible_user_password }} ansible_port={{ ansible_port }}"
+    - block:
+        - name: Update ansible_user and ansible_password in inventory
+          ansible.builtin.lineinfile:
+            path: "{{ playbook_dir }}/inventory.ini"
+            regexp: "^{{ inventory_hostname }} ansible_host=.*ansible_user=.*ansible_password=.*"
+            line: "{{ inventory_hostname }} ansible_host={{ ansible_host }} ansible_user={{ ansible_user_name }} ansible_password=\"{{ ansible_user_password }}\" ansible_port={{ ansible_port }}"
+          delegate_to: localhost
+          become: no
       when: step_ansible_user_created.changed
 
     # Harden SSH configuration
@@ -147,17 +151,54 @@
 
     # Install and connect to Tailscale Network
     - block:
+        # For Debian/Ubuntu
         - name: Update apt cache (Debian/Ubuntu)
           apt:
             update_cache: yes
           when: ansible_os_family == "Debian"
 
-        - name: Install Tailscale
+        - name: Add Tailscale GPG key (Debian/Ubuntu)
+          ansible.builtin.get_url:
+            url: "https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg"
+            dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+            mode: '0644'
+          when: ansible_os_family == "Debian"
+
+        - name: Add Tailscale repository (Debian/Ubuntu)
+          ansible.builtin.apt_repository:
+            repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu/ {{ ansible_distribution_release }} main"
+            state: present
+          when: ansible_os_family == "Debian"
+
+        - name: Update apt cache after adding Tailscale repo (Debian/Ubuntu)
+          apt:
+            update_cache: yes
+          when: ansible_os_family == "Debian"
+
+        - name: Install Tailscale (Debian/Ubuntu)
           apt:
             name: tailscale
             state: present
           when: ansible_os_family == "Debian"
 
+        # For Red Hat/CentOS/AlmaLinux/Rocky
+        - name: Add Tailscale repository (Red Hat-based)
+          ansible.builtin.yum_repository:
+            name: tailscale
+            description: "Tailscale repository"
+            baseurl: "https://pkgs.tailscale.com/stable/rhel/{{ ansible_distribution_major_version }}/$basearch"
+            gpgkey: "https://pkgs.tailscale.com/stable/rhel/{{ ansible_distribution_major_version }}/noarch.gpg"
+            enabled: yes
+            gpgcheck: yes
+          when: ansible_os_family == "RedHat"
+
+        - name: Install Tailscale (Red Hat-based)
+          yum:
+            name: tailscale
+            state: present
+          when: ansible_os_family == "RedHat"
+
+        # Common task for enabling and starting Tailscale
         - name: Enable and start Tailscale service
           systemd:
             name: tailscaled
@@ -167,18 +208,28 @@
         - name: Authenticate and connect to Tailscale
           shell: |
             tailscale up \
-              --authkey={{ TAILSCALE_AUTH_KEY }} \
-              {% if TAILSCALE_SUBNETS is defined and TAILSCALE_SUBNETS|length > 0 %}\
-              --advertise-routes={{ TAILSCALE_SUBNETS | join(",") }} \
+              --authkey={{ tailscale_auth_key }} \
+              {% if tailscale_subnets is defined and tailscale_subnets|length > 0 %}\
+              --advertise-routes={{ tailscale_subnets | join(",") }} \
               {% endif %}\
-              --accept-routes
-          args:
-            warn: false
-          register: tailscale_up_result
+              {% if tailscale_accept_subnets %}\
+              --accept-routes \
+              {% endif %}
+          async: 45
+          poll: 0
+          register: tailscale_task
+
+        - name: Wait for Tailscale task to complete
+          async_status:
+            jid: "{{ tailscale_task.ansible_job_id }}"
+          register: tailscale_result
+          until: tailscale_result.finished
+          retries: 10
+          delay: 5
 
         - name: Display Tailscale connection output
           debug:
-            var: tailscale_up_result.stdout
+            var: tailscale_result.finished.stdout
 
         - name: Verify Tailscale connection
           command: tailscale status
@@ -200,13 +251,16 @@
           shell: ssh-keygen -R {{ tailscale_ip.stdout }}
           changed_when: false
           delegate_to: localhost
+          become: no
 
         - name: Update ansible_host in inventory
           lineinfile:
-            path: ./inventory.ini
+            path: "{{ playbook_dir }}/inventory.ini"
             regexp: "^{{ inventory_hostname }} ansible_host=.*"
-            line: "{{ inventory_hostname }} ansible_host={{ tailscale_ip.stdout }} ansible_user={{ ansible_user }} ansible_password={{ ansible_password }} ansible_port={{ ansible_port }}"
+            line: "{{ inventory_hostname }} ansible_host={{ tailscale_ip.stdout }} ansible_user={{ ansible_user }} ansible_port={{ ansible_port }}"
           when: ansible_host != tailscale_ip.stdout
+          delegate_to: localhost
+          become: no
       when: configure_tailscale == true
 
     # Install Docker CE and set up rootless mode
@@ -241,6 +295,8 @@
           - docker-ce
           - docker-ce-cli
           - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
         state: present
 
     - name: Install additional dependencies for rootless mode

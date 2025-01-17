@@ -46,6 +46,7 @@ Edit the `vars` section of the playbook or pass them as extra variables. Here ar
 - `tailscale_auth_key`: Tailscale auth key (replace `<your_tailscale_auth_key>` in the playbook).
 - `tailscale_subnets`: Subnets to advertise (e.g., `['0.0.0.0/0', '::/0']` or leave empty).
 - `configure_tailscale`: Set to `true` to enable Tailscale setup (default).
+- `tailscale_accept_subnets`: Set to `true` to enable tailscale to reveive advertised subnets from the network.
 - `expose_ssh_port`: Set to `true` to expose SSH to the public internet (default: `false`).
 - `ansible_user_name`: Name of the Ansible user to create.
 - `ansible_user_password`: Password for the Ansible user (hashed automatically).
@@ -59,7 +60,7 @@ Example to override variables:
 vars:
   tailscale_auth_key: "tskey-xxxxxxxx"
   configure_tailscale: true
-  expose_ssh_port: true
+  expose_ssh_port: false
   ansible_user_name: "ansible_user"
   ansible_user_password: "StrongPassword123"
   ansible_user_ssh_key: |
